@@ -104,9 +104,13 @@ class LiteMonoTrainer:
         self.num_total_steps = num_train_samples // self.options.batch_size * self.options.num_epochs
 
         train_dataset = self.dataset(self.options.data_path, train_filenames, self.options.height, self.options.width, self.options.frame_ids, 4, is_train=True, img_ext=img_ext)
+        # Select a subset of the training data
+        train_dataset, _ = torch.utils.data.random_split(train_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
         self.train_loader = DataLoader(train_dataset, self.options.batch_size, True, num_workers=self.options.num_workers, pin_memory=True, drop_last=True)
         
         val_dataset = self.dataset( self.options.data_path, val_filenames, self.options.height, self.options.width, self.options.frame_ids, 4, is_train=False, img_ext=img_ext)
+        # Select a subset of the validation data
+        val_dataset, _ = torch.utils.data.random_split(val_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
         self.val_loader = DataLoader(val_dataset, self.options.batch_size, True, num_workers=self.options.num_workers, pin_memory=True, drop_last=True)
         self.val_iter = iter(self.val_loader)
 
