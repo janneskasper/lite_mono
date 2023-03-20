@@ -50,7 +50,7 @@ class LiteMonoTrainer:
 
         # Optimizer and model initialization
         self.model_optimizer = optim.Adam(self.params_to_train, self.options.learning_rate)
-        self.model_lr_scheduler = optim.lr_scheduler.StepLR(self.model_optimizer, self.options.scheduler_step_site, 0.1)
+        self.model_lr_scheduler = optim.lr_scheduler.StepLR(self.model_optimizer, self.options.scheduler_step_size, 0.1)
 
         if self.options.load_weights_folder is not None:
             model_state_management.load_model(self.options.load_weights_folder, self.options.models_to_load, self.models, self.model_optimizer)
@@ -67,26 +67,26 @@ class LiteMonoTrainer:
         print("There are {:d} training items and {:d} validation items\n".format(len(self.train_loader.dataset), len(self.val_loader.dataset)))
 
         # Setup logging
-        self.logger = TrainingLogger(self.options.batch_size, self.options.num_epochs, len(self.train_loader.dataset))
+        self.logger = TrainingLogger(self.log_path, self.options.batch_size, self.options.num_epochs, len(self.train_loader.dataset), self.options.scales, self.options.frame_ids)
 
     def __setup_lite_mono_model(self):
         # setup for LiteMono architecture
         self.models["encoder"] = LiteMono()
-        self.models["encoder"].to_device(self.device)
+        self.models["encoder"].to(self.device)
         self.params_to_train += list(self.models["encoder"].parameters())
 
         self.models["depth_decoder"] = DepthDecoder(self.models["encoder"].num_ch_enc, self.options.scales)
-        self.models["depth_decoder"].to_device(self.device)
+        self.models["depth_decoder"].to(self.device)
         self.params_to_train += list(self.models["depth_decoder"].parameters())
 
     def __setup_pose_net_model(self):
         # setup for PoseNet architecture
         self.models["pose_encoder"] = ResnetEncoder(self.options.num_layers, pretrained=self.options.weights_init == "pretrained", num_input_images=self.num_pose_frames)
-        self.models["pose_encoder"].to_device(self.device)
+        self.models["pose_encoder"].to(self.device)
         self.params_to_train += list(self.models["pose_encoder"].parameters())
 
         self.models["pose_decoder"] = PoseDecoder(self.models["pose_encoder"].num_ch_enc, num_input_features=1, num_frames_to_predict_for=2)
-        self.models["pose_decoder"].to_device(self.device)
+        self.models["pose_decoder"].to(self.device)
         self.params_to_train += list(self.models["pose_decoder"].parameters())
 
     def __setup_dataset(self):
@@ -149,14 +149,16 @@ class LiteMonoTrainer:
         self.logger.start()
 
         for self.current_epoch in range(self.options.num_epochs):
+            print(f"Running epoch: {self.current_epoch}")
             self.__run_epoch()
             if (self.current_epoch + 1) % self.options.save_frequency == 0:
                 model_state_management.save_model(self.log_path, f"weights_{self.current_epoch}", self.models, self.options, self.model_optimizer)
 
     def __run_epoch(self):
-        self.model_lr_scheduler.step()
         
+        print("Before training ...")
         self.__set_train_model()
+        print("After training ...")
 
         for batch_idx, inputs in enumerate(self.train_loader):
 
@@ -167,6 +169,7 @@ class LiteMonoTrainer:
             self.model_optimizer.zero_grad()
             losses["loss"].backward()
             self.model_optimizer.step()
+            self.model_lr_scheduler.step()
 
             duration = time.time() - start
 
@@ -183,255 +186,259 @@ class LiteMonoTrainer:
                 self.logger.log("train", inputs, outputs, losses, self.current_step)
                 self.__val()
 
+            print(f"Step: {self.step}")
             self.step += 1
 
-        def __process_batch(self, inputs):
-            """Pass a minibatch through the network and generate images and losses
-            """
-            for key, ipt in inputs.items():
-                inputs[key] = ipt.to(self.device)
+    def __process_batch(self, inputs):
+        """Pass a minibatch through the network and generate images and losses
+        """
+        print(f"Moving data to {self.device}")
+        for key, ipt in inputs.items():
+            print(".")
+            inputs[key] = ipt.to(self.device)
+        print(f"Moving data to {self.device} done !")
 
-            features = self.models["encoder"](inputs["color_aug", 0, 0])
-            outputs = self.models["depth_decoder"](features)
+        features = self.models["encoder"](inputs["color_aug", 0, 0])
+        outputs = self.models["depth_decoder"](features)
 
-            if self.opttions.predictive_mask:
-                outputs["predictive_mask"] = self.models["predictive_mask"](features)
+        if self.opttions.predictive_mask:
+            outputs["predictive_mask"] = self.models["predictive_mask"](features)
 
-            outputs.update(self.__predict_poses(inputs, features))
+        outputs.update(self.__predict_poses(inputs, features))
 
-            self.__generate_images_pred(inputs, outputs)
-            losses = self.__compute_losses(inputs, outputs)
+        self.__generate_images_pred(inputs, outputs)
+        losses = self.__compute_losses(inputs, outputs)
 
-            return outputs, losses
+        return outputs, losses
 
-        def __predict_poses(self, inputs, features):
-            """Predict poses between input frames for monocular sequences.
-            """
-            outputs = {}
-            if self.num_pose_frames == 2:
-                # In this setting, we compute the pose to each source frame via a
-                # separate forward pass through the pose network.
+    def __predict_poses(self, inputs, features):
+        """Predict poses between input frames for monocular sequences.
+        """
+        outputs = {}
+        if self.num_pose_frames == 2:
+            # In this setting, we compute the pose to each source frame via a
+            # separate forward pass through the pose network.
 
-                # select what features the pose network takes as input
-                if self.options.pose_model_type == "shared":
-                    pose_feats = {f_i: features[f_i] for f_i in self.options.frame_ids}
-                else:
-                    pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.options.frame_ids}
+            # select what features the pose network takes as input
+            if self.options.pose_model_type == "shared":
+                pose_feats = {f_i: features[f_i] for f_i in self.options.frame_ids}
+            else:
+                pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.options.frame_ids}
 
-                for f_i in self.options.frame_ids[1:]:
-                    if f_i != "s":
-                        # To maintain ordering we always pass frames in temporal order
-                        if f_i < 0:
-                            pose_inputs = [pose_feats[f_i], pose_feats[0]]
-                        else:
-                            pose_inputs = [pose_feats[0], pose_feats[f_i]]
-
-                        pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
-                        axisangle, translation = self.models["pose_decoder"](pose_inputs)
-                        outputs[("axisangle", 0, f_i)] = axisangle
-                        outputs[("translation", 0, f_i)] = translation
-
-                        # Invert the matrix if the frame id is negative
-                        outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
-                            axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
-
-            return outputs
-
-        def __generate_images_pred(self, inputs, outputs):
-            """Generate the warped (reprojected) color images for a minibatch.
-            Generated images are saved into the `outputs` dictionary.
-            """
-            for scale in self.options.scales:
-                disp = outputs[("disp", scale)]
-                if self.options.v1_multiscale:
-                    source_scale = scale
-                else:
-                    disp = F.interpolate(
-                        disp, [self.options.height, self.options.width], mode="bilinear", align_corners=False)
-                    source_scale = 0
-
-                _, depth = disp_to_depth(disp, self.options.min_depth, self.options.max_depth)
-
-                outputs[("depth_decoder", 0, scale)] = depth
-
-                for i, frame_id in enumerate(self.options.frame_ids[1:]):
-
-                    if frame_id == "s":
-                        T = inputs["stereo_T"]
+            for f_i in self.options.frame_ids[1:]:
+                if f_i != "s":
+                    # To maintain ordering we always pass frames in temporal order
+                    if f_i < 0:
+                        pose_inputs = [pose_feats[f_i], pose_feats[0]]
                     else:
-                        T = outputs[("cam_T_cam", 0, frame_id)]
+                        pose_inputs = [pose_feats[0], pose_feats[f_i]]
 
-                    cam_points = self.backproject_depth[source_scale](
-                        depth, inputs[("inv_K", source_scale)])
-                    pix_coords = self.project_3d[source_scale](
-                        cam_points, inputs[("K", source_scale)], T)
+                    pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
+                    axisangle, translation = self.models["pose_decoder"](pose_inputs)
+                    outputs[("axisangle", 0, f_i)] = axisangle
+                    outputs[("translation", 0, f_i)] = translation
 
-                    outputs[("sample", frame_id, scale)] = pix_coords
+                    # Invert the matrix if the frame id is negative
+                    outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
+                        axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
 
-                    outputs[("color", frame_id, scale)] = F.grid_sample(
-                        inputs[("color", frame_id, source_scale)],
-                        outputs[("sample", frame_id, scale)],
-                        padding_mode="border")
+        return outputs
 
-                    if not self.options.disable_automasking:
-                        outputs[("color_identity", frame_id, scale)] = \
-                            inputs[("color", frame_id, source_scale)]
+    def __generate_images_pred(self, inputs, outputs):
+        """Generate the warped (reprojected) color images for a minibatch.
+        Generated images are saved into the `outputs` dictionary.
+        """
+        for scale in self.options.scales:
+            disp = outputs[("disp", scale)]
+            if self.options.v1_multiscale:
+                source_scale = scale
+            else:
+                disp = F.interpolate(
+                    disp, [self.options.height, self.options.width], mode="bilinear", align_corners=False)
+                source_scale = 0
 
-        def __compute_losses(self, inputs, outputs):
-            """Compute the reprojection and smoothness losses for a minibatch
-            """
-            losses = {}
-            total_loss = 0
+            _, depth = disp_to_depth(disp, self.options.min_depth, self.options.max_depth)
 
-            for scale in self.options.scales:
-                loss = 0
-                reprojection_losses = []
+            outputs[("depth_decoder", 0, scale)] = depth
 
-                if self.options.v1_multiscale:
-                    source_scale = scale
+            for i, frame_id in enumerate(self.options.frame_ids[1:]):
+
+                if frame_id == "s":
+                    T = inputs["stereo_T"]
                 else:
-                    source_scale = 0
+                    T = outputs[("cam_T_cam", 0, frame_id)]
 
-                disp = outputs[("disp", scale)]
-                color = inputs[("color", 0, scale)]
-                target = inputs[("color", 0, source_scale)]
+                cam_points = self.backproject_depth[source_scale](
+                    depth, inputs[("inv_K", source_scale)])
+                pix_coords = self.project_3d[source_scale](
+                    cam_points, inputs[("K", source_scale)], T)
 
-                for frame_id in self.options.frame_ids[1:]:
-                    pred = outputs[("color", frame_id, scale)]
-                    reprojection_losses.append(self.__compute_reprojection_loss(pred, target))
+                outputs[("sample", frame_id, scale)] = pix_coords
 
-                reprojection_losses = torch.cat(reprojection_losses, 1)
+                outputs[("color", frame_id, scale)] = F.grid_sample(
+                    inputs[("color", frame_id, source_scale)],
+                    outputs[("sample", frame_id, scale)],
+                    padding_mode="border")
 
                 if not self.options.disable_automasking:
-                    identity_reprojection_losses = []
-                    for frame_id in self.options.frame_ids[1:]:
-                        pred = inputs[("color", frame_id, source_scale)]
-                        identity_reprojection_losses.append(
-                            self.__compute_reprojection_loss(pred, target))
+                    outputs[("color_identity", frame_id, scale)] = \
+                        inputs[("color", frame_id, source_scale)]
 
-                    identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1)
+    def __compute_losses(self, inputs, outputs):
+        """Compute the reprojection and smoothness losses for a minibatch
+        """
+        losses = {}
+        total_loss = 0
 
-                    if self.options.avg_reprojection:
-                        identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
-                    else:
-                        # save both images, and do min all at once below
-                        identity_reprojection_loss = identity_reprojection_losses
+        for scale in self.options.scales:
+            loss = 0
+            reprojection_losses = []
 
-                elif self.options.predictive_mask:
-                    # use the predicted mask
-                    mask = outputs["predictive_mask"]["disp", scale]
-                    if not self.options.v1_multiscale:
-                        mask = F.interpolate(
-                            mask, [self.options.height, self.options.width],
-                            mode="bilinear", align_corners=False)
+            if self.options.v1_multiscale:
+                source_scale = scale
+            else:
+                source_scale = 0
 
-                    reprojection_losses *= mask
+            disp = outputs[("disp", scale)]
+            color = inputs[("color", 0, scale)]
+            target = inputs[("color", 0, source_scale)]
 
-                    # add a loss pushing mask to 1 (using nn.BCELoss for stability)
-                    weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
-                    loss += weighting_loss.mean()
+            for frame_id in self.options.frame_ids[1:]:
+                pred = outputs[("color", frame_id, scale)]
+                reprojection_losses.append(self.__compute_reprojection_loss(pred, target))
+
+            reprojection_losses = torch.cat(reprojection_losses, 1)
+
+            if not self.options.disable_automasking:
+                identity_reprojection_losses = []
+                for frame_id in self.options.frame_ids[1:]:
+                    pred = inputs[("color", frame_id, source_scale)]
+                    identity_reprojection_losses.append(
+                        self.__compute_reprojection_loss(pred, target))
+
+                identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1)
 
                 if self.options.avg_reprojection:
-                    reprojection_loss = reprojection_losses.mean(1, keepdim=True)
+                    identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
                 else:
-                    reprojection_loss = reprojection_losses
+                    # save both images, and do min all at once below
+                    identity_reprojection_loss = identity_reprojection_losses
 
-                if not self.options.disable_automasking:
-                    # add random numbers to break ties
-                    identity_reprojection_loss += torch.randn(
-                        identity_reprojection_loss.shape, device=self.device) * 0.00001
+            elif self.options.predictive_mask:
+                # use the predicted mask
+                mask = outputs["predictive_mask"]["disp", scale]
+                if not self.options.v1_multiscale:
+                    mask = F.interpolate(
+                        mask, [self.options.height, self.options.width],
+                        mode="bilinear", align_corners=False)
 
-                    combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
-                else:
-                    combined = reprojection_loss
+                reprojection_losses *= mask
 
-                if combined.shape[1] == 1:
-                    to_optimise = combined
-                else:
-                    to_optimise, idxs = torch.min(combined, dim=1)
+                # add a loss pushing mask to 1 (using nn.BCELoss for stability)
+                weighting_loss = 0.2 * nn.BCELoss()(mask, torch.ones(mask.shape).cuda())
+                loss += weighting_loss.mean()
 
-                if not self.options.disable_automasking:
-                    outputs["identity_selection/{}".format(scale)] = (
-                        idxs > identity_reprojection_loss.shape[1] - 1).float()
-
-                loss += to_optimise.mean()
-
-                mean_disp = disp.mean(2, True).mean(3, True)
-                norm_disp = disp / (mean_disp + 1e-7)
-                smooth_loss = get_smooth_loss(norm_disp, color)
-
-                loss += self.options.disparity_smoothness * smooth_loss / (2 ** scale)
-                total_loss += loss
-                losses["loss/{}".format(scale)] = loss
-
-            total_loss /= self.num_scales
-            losses["loss"] = total_loss
-            return losses
-
-        def __compute_reprojection_loss(self, pred, target):
-            """Computes reprojection loss between a batch of predicted and target images
-            """
-            abs_diff = torch.abs(target - pred)
-            l1_loss = abs_diff.mean(1, True)
-
-            if self.opt.no_ssim:
-                reprojection_loss = l1_loss
+            if self.options.avg_reprojection:
+                reprojection_loss = reprojection_losses.mean(1, keepdim=True)
             else:
-                ssim_loss = self.ssim(pred, target).mean(1, True)
-                reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
+                reprojection_loss = reprojection_losses
 
-            return reprojection_loss
-        
-        def __compute_depth_losses(self, inputs, outputs, losses):
-            """Compute depth metrics, to allow monitoring during training
+            if not self.options.disable_automasking:
+                # add random numbers to break ties
+                identity_reprojection_loss += torch.randn(
+                    identity_reprojection_loss.shape, device=self.device) * 0.00001
 
-            This isn't particularly accurate as it averages over the entire batch,
-            so is only used to give an indication of validation performance
-            """
-            depth_pred = outputs[("depth", 0, 0)]
-            depth_pred = torch.clamp(F.interpolate(
-                depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
-            depth_pred = depth_pred.detach()
+                combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
+            else:
+                combined = reprojection_loss
 
-            depth_gt = inputs["depth_gt"]
-            mask = depth_gt > 0
+            if combined.shape[1] == 1:
+                to_optimise = combined
+            else:
+                to_optimise, idxs = torch.min(combined, dim=1)
 
-            # garg/eigen crop
-            crop_mask = torch.zeros_like(mask)
-            crop_mask[:, :, 153:371, 44:1197] = 1
-            mask = mask * crop_mask
+            if not self.options.disable_automasking:
+                outputs["identity_selection/{}".format(scale)] = (
+                    idxs > identity_reprojection_loss.shape[1] - 1).float()
 
-            depth_gt = depth_gt[mask]
-            depth_pred = depth_pred[mask]
-            depth_pred *= torch.median(depth_gt) / torch.median(depth_pred)
+            loss += to_optimise.mean()
 
-            depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
+            mean_disp = disp.mean(2, True).mean(3, True)
+            norm_disp = disp / (mean_disp + 1e-7)
+            smooth_loss = get_smooth_loss(norm_disp, color)
 
-            depth_errors = compute_depth_errors(depth_gt, depth_pred)
+            loss += self.options.disparity_smoothness * smooth_loss / (2 ** scale)
+            total_loss += loss
+            losses["loss/{}".format(scale)] = loss
 
-            for i, metric in enumerate(self.depth_metric_names):
-                losses[metric] = np.array(depth_errors[i].cpu())
+        total_loss /= self.num_scales
+        losses["loss"] = total_loss
+        return losses
 
-        def __val(self):
-            """Validate the model on a single minibatch
-            """
-            self.__set_eval_mode()
-            try:
-                inputs = self.val_iter.next()
-            except StopIteration:
-                self.val_iter = iter(self.val_loader)
-                inputs = self.val_iter.next()
+    def __compute_reprojection_loss(self, pred, target):
+        """Computes reprojection loss between a batch of predicted and target images
+        """
+        abs_diff = torch.abs(target - pred)
+        l1_loss = abs_diff.mean(1, True)
 
-            with torch.no_grad():
-                outputs, losses = self.__process_batch(inputs)
+        if self.opt.no_ssim:
+            reprojection_loss = l1_loss
+        else:
+            ssim_loss = self.ssim(pred, target).mean(1, True)
+            reprojection_loss = 0.85 * ssim_loss + 0.15 * l1_loss
 
-                if "depth_gt" in inputs:
-                    self.__compute_depth_losses(inputs, outputs, losses)
-                
-                self.logger.log("val", inputs, outputs, losses, self.current_step)
-                del inputs, outputs, losses
+        return reprojection_loss
+    
+    def __compute_depth_losses(self, inputs, outputs, losses):
+        """Compute depth metrics, to allow monitoring during training
 
-            self.__set_train_mode()
+        This isn't particularly accurate as it averages over the entire batch,
+        so is only used to give an indication of validation performance
+        """
+        depth_pred = outputs[("depth", 0, 0)]
+        depth_pred = torch.clamp(F.interpolate(
+            depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
+        depth_pred = depth_pred.detach()
+
+        depth_gt = inputs["depth_gt"]
+        mask = depth_gt > 0
+
+        # garg/eigen crop
+        crop_mask = torch.zeros_like(mask)
+        crop_mask[:, :, 153:371, 44:1197] = 1
+        mask = mask * crop_mask
+
+        depth_gt = depth_gt[mask]
+        depth_pred = depth_pred[mask]
+        depth_pred *= torch.median(depth_gt) / torch.median(depth_pred)
+
+        depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
+
+        depth_errors = compute_depth_errors(depth_gt, depth_pred)
+
+        for i, metric in enumerate(self.depth_metric_names):
+            losses[metric] = np.array(depth_errors[i].cpu())
+
+    def __val(self):
+        """Validate the model on a single minibatch
+        """
+        self.__set_eval_mode()
+        try:
+            inputs = self.val_iter.next()
+        except StopIteration:
+            self.val_iter = iter(self.val_loader)
+            inputs = self.val_iter.next()
+
+        with torch.no_grad():
+            outputs, losses = self.__process_batch(inputs)
+
+            if "depth_gt" in inputs:
+                self.__compute_depth_losses(inputs, outputs, losses)
+            
+            self.logger.log("val", inputs, outputs, losses, self.current_step)
+            del inputs, outputs, losses
+
+        self.__set_train_mode()
 
 
 if __name__ == "__main__":
@@ -439,3 +446,4 @@ if __name__ == "__main__":
     opts = options.parse()
 
     trainer = LiteMonoTrainer(opts)
+    trainer.train()

@@ -6,7 +6,9 @@ from utils import *
 
 class TrainingLogger:
 
-    def __init__(self, batch_size, epochs, num_train_samples, scales, frame_ids, predictive_masking=False, disable_automasking=False) -> None:
+    def __init__(self, log_path, batch_size, epochs, num_train_samples, scales, frame_ids, predictive_masking=False, disable_automasking=False) -> None:
+        self.log_path = log_path
+        
         self.batch_size = batch_size
         self.epochs = epochs
         self.num_train_samples = num_train_samples
