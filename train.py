@@ -199,7 +199,7 @@ class LiteMonoTrainer:
         """
         print(f"Moving data to {self.device}")
         for key, ipt in inputs.items():
-            print(".")
+            # print(".")
             inputs[key] = ipt.to(self.device)
         print(f"Moving data to {self.device} done !")
 
