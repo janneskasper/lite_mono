@@ -160,10 +160,7 @@ class LiteMonoTrainer:
                 model_state_management.save_model(self.log_path, f"weights_{self.current_epoch}", self.models, self.options, self.model_optimizer)
 
     def __run_epoch(self):
-        
-        print("Before training ...")
         self.__set_train_model()
-        print("After training ...")
 
         for batch_idx, inputs in enumerate(self.train_loader):
 
@@ -199,7 +196,7 @@ class LiteMonoTrainer:
         """
         print(f"Moving data to {self.device}")
         for key, ipt in inputs.items():
-            # print(".")
+            print('.', end='')
             inputs[key] = ipt.to(self.device)
         print(f"Moving data to {self.device} done !")
 
