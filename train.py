@@ -15,6 +15,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+from torch import default_generator, randperm
+from torch._utils import _accumulate
+from torch.utils.data.dataset import Subset
+
+
 from utils import *
 from kitti_utils import *
 from layers import *
@@ -67,7 +72,7 @@ class LiteMonoTrainer:
         print("There are {:d} training items and {:d} validation items\n".format(len(self.train_loader.dataset), len(self.val_loader.dataset)))
 
         # Setup logging
-        self.logger = TrainingLogger(self.log_path, self.options.batch_size, self.options.num_epochs, len(self.train_loader.dataset), self.options.scales, self.options.frame_ids)
+        self.logger = TrainingLogger(self.log_path, self.options, len(self.train_loader.dataset))
 
     def __setup_lite_mono_model(self):
         # setup for LiteMono architecture
@@ -105,12 +110,12 @@ class LiteMonoTrainer:
 
         train_dataset = self.dataset(self.options.data_path, train_filenames, self.options.height, self.options.width, self.options.frame_ids, 4, is_train=True, img_ext=img_ext)
         # Select a subset of the training data
-        train_dataset, _ = torch.utils.data.random_split(train_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
+        train_dataset, _ = self.random_split(train_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
         self.train_loader = DataLoader(train_dataset, self.options.batch_size, True, num_workers=self.options.num_workers, pin_memory=True, drop_last=True)
         
         val_dataset = self.dataset( self.options.data_path, val_filenames, self.options.height, self.options.width, self.options.frame_ids, 4, is_train=False, img_ext=img_ext)
         # Select a subset of the validation data
-        val_dataset, _ = torch.utils.data.random_split(val_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
+        val_dataset, _ = self.random_split(val_dataset, [self.options.data_percentage, 1.0 - self.options.data_percentage])
         self.val_loader = DataLoader(val_dataset, self.options.batch_size, True, num_workers=self.options.num_workers, pin_memory=True, drop_last=True)
         self.val_iter = iter(self.val_loader)
 
@@ -155,10 +160,7 @@ class LiteMonoTrainer:
                 model_state_management.save_model(self.log_path, f"weights_{self.current_epoch}", self.models, self.options, self.model_optimizer)
 
     def __run_epoch(self):
-        
-        print("Before training ...")
         self.__set_train_model()
-        print("After training ...")
 
         for batch_idx, inputs in enumerate(self.train_loader):
 
@@ -174,8 +176,8 @@ class LiteMonoTrainer:
             duration = time.time() - start
 
             # log less frequently after the first 2000 steps to save time & disk space
-            early_phase = batch_idx % self.options.log_frequency == 0 and self.step < 2000
-            late_phase = self.step % 2000 == 0
+            early_phase = batch_idx % self.options.log_frequency == 0 and self.current_step < 2000
+            late_phase = self.current_step % 2000 == 0
 
             if early_phase or late_phase:
                 self.logger.log_time(batch_idx, duration, losses["loss"].cpu().data, self.current_epoch, self.current_step)
@@ -186,24 +188,26 @@ class LiteMonoTrainer:
                 self.logger.log("train", inputs, outputs, losses, self.current_step)
                 self.__val()
 
-            print(f"Step: {self.step}")
-            self.step += 1
+            print(f"Step: {self.current_step}")
+            self.current_step += 1
 
     def __process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
         """
         print(f"Moving data to {self.device}")
         for key, ipt in inputs.items():
-            print(".")
+            print('.', end='')
             inputs[key] = ipt.to(self.device)
         print(f"Moving data to {self.device} done !")
 
         features = self.models["encoder"](inputs["color_aug", 0, 0])
         outputs = self.models["depth_decoder"](features)
 
-        if self.opttions.predictive_mask:
+        if self.options.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
 
+        # Outputs is a list of dicts, which it shouldnt be
+        outputs = outputs[0]
         outputs.update(self.__predict_poses(inputs, features))
 
         self.__generate_images_pred(inputs, outputs)
@@ -381,7 +385,7 @@ class LiteMonoTrainer:
         abs_diff = torch.abs(target - pred)
         l1_loss = abs_diff.mean(1, True)
 
-        if self.opt.no_ssim:
+        if self.options.no_ssim:
             reprojection_loss = l1_loss
         else:
             ssim_loss = self.ssim(pred, target).mean(1, True)
@@ -395,7 +399,8 @@ class LiteMonoTrainer:
         This isn't particularly accurate as it averages over the entire batch,
         so is only used to give an indication of validation performance
         """
-        depth_pred = outputs[("depth", 0, 0)]
+        # Here depth was changed to depth_decoder
+        depth_pred = outputs[("depth_decoder", 0, 0)]
         depth_pred = torch.clamp(F.interpolate(
             depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
         depth_pred = depth_pred.detach()
@@ -422,7 +427,7 @@ class LiteMonoTrainer:
     def __val(self):
         """Validate the model on a single minibatch
         """
-        self.__set_eval_mode()
+        self.__set_eval_model()
         try:
             inputs = self.val_iter.next()
         except StopIteration:
@@ -438,7 +443,58 @@ class LiteMonoTrainer:
             self.logger.log("val", inputs, outputs, losses, self.current_step)
             del inputs, outputs, losses
 
-        self.__set_train_mode()
+        self.__set_train_model()
+
+    def random_split(self, dataset, lengths, generator=default_generator):
+        """
+        Randomly split a dataset into non-overlapping new datasets of given lengths.
+
+        If a list of fractions that sum up to 1 is given,
+        the lengths will be computed automatically as
+        floor(frac * len(dataset)) for each fraction provided.
+
+        After computing the lengths, if there are any remainders, 1 count will be
+        distributed in round-robin fashion to the lengths
+        until there are no remainders left.
+
+        Optionally fix the generator for reproducible results, e.g.:
+
+        >>> random_split(range(10), [3, 7], generator=torch.Generator().manual_seed(42))
+        >>> random_split(range(30), [0.3, 0.3, 0.4], generator=torch.Generator(
+        ...   ).manual_seed(42))
+
+        Args:
+            dataset (Dataset): Dataset to be split
+            lengths (sequence): lengths or fractions of splits to be produced
+            generator (Generator): Generator used for the random permutation.
+        """
+        assert isinstance(lengths, (list, tuple))
+        if math.isclose(sum(lengths), 1) and sum(lengths) <= 1:
+            subset_lengths: List[int] = []
+            for i, frac in enumerate(lengths):
+                if frac < 0 or frac > 1:
+                    raise ValueError(f"Fraction at index {i} is not between 0 and 1")
+                n_items_in_split = int(
+                    math.floor(len(dataset) * frac)  # type: ignore[arg-type]
+                )
+                subset_lengths.append(n_items_in_split)
+            remainder = len(dataset) - sum(subset_lengths)  # type: ignore[arg-type]
+            # add 1 to all the lengths in round-robin fashion until the remainder is 0
+            for i in range(remainder):
+                idx_to_add_at = i % len(subset_lengths)
+                subset_lengths[idx_to_add_at] += 1
+            lengths = subset_lengths
+            for i, length in enumerate(lengths):
+                if length == 0:
+                    warnings.warn(f"Length of split at index {i} is 0. "
+                                f"This might result in an empty dataset.")
+
+        # Cannot verify that dataset is Sized
+        if sum(lengths) != len(dataset):    # type: ignore[arg-type]
+            raise ValueError("Sum of input lengths does not equal the length of the input dataset!")
+
+        indices = randperm(sum(lengths), generator=generator).tolist()  # type: ignore[call-overload]
+        return [Subset(dataset, indices[offset - length : offset]) for offset, length in zip(_accumulate(lengths), lengths)]
 
 
 if __name__ == "__main__":

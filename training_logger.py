@@ -6,15 +6,16 @@ from utils import *
 
 class TrainingLogger:
 
-    def __init__(self, log_path, batch_size, epochs, num_train_samples, scales, frame_ids, predictive_masking=False, disable_automasking=False) -> None:
+    def __init__(self, log_path, options, num_train_samples, predictive_masking=False, disable_automasking=False) -> None:
+        self.options = options
         self.log_path = log_path
         
-        self.batch_size = batch_size
-        self.epochs = epochs
+        self.batch_size = self.options.batch_size
+        self.epochs = self.options.num_epochs
         self.num_train_samples = num_train_samples
-        self.num_total_steps = num_train_samples // batch_size * epochs
-        self.scales = scales
-        self.frame_ids = frame_ids
+        self.num_total_steps = self.num_train_samples // self.options.batch_size * self.epochs
+        self.scales = self.options.scales
+        self.frame_ids = self.options.frame_ids
 
         self.predictive_masking = predictive_masking
         self.disable_automasking = disable_automasking
@@ -55,14 +56,14 @@ class TrainingLogger:
                     "disp_{}/{}".format(s, j),
                     normalize_image(outputs[("disp", s)][j]), step)
 
-                if self.opt.predictive_mask:
-                    for f_idx, frame_id in enumerate(self.opt.frame_ids[1:]):
+                if self.options.predictive_mask:
+                    for f_idx, frame_id in enumerate(self.options.frame_ids[1:]):
                         writer.add_image(
                             "predictive_mask_{}_{}/{}".format(frame_id, s, j),
                             outputs["predictive_mask"][("disp", s)][j, f_idx][None, ...],
                             step)
 
-                elif not self.opt.disable_automasking:
+                elif not self.options.disable_automasking:
                     writer.add_image(
                         "automask_{}/{}".format(s, j),
                         outputs["identity_selection/{}".format(s)][j][None, ...], step)
