@@ -67,7 +67,10 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 
 
 ## Training
-The training code will be released soon.
+
+For smol pc
+
+    python train.py --model_name Lite_Mono --num_workers=4 --batch_size=4 --data_percentage 0.01
 
 ## Citation
 
