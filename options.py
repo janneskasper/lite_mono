@@ -170,6 +170,10 @@ class LiteMonoOptions:
                                  type=str,
                                  help="models to load",
                                  default=["encoder", "depth", "pose_encoder", "pose"])
+        self.parser.add_argument("--data_percentage",
+                                 type=float,
+                                 help="portion of dataset to use",
+                                 default=0.1)
 
         # LOGGING options
         self.parser.add_argument("--log_frequency",
