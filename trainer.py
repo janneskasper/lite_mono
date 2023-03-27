@@ -156,14 +156,14 @@ class Trainer:
         train_dataset = self.dataset(
             self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
             self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
-        train_dataset = torch.utils.data.random_split(train_dataset, [self.opt.data_percentage, 1.0 - self.opt.data_percentage])
+        train_dataset, _ = torch.utils.data.random_split(train_dataset, [int(self.opt.data_percentage * len(train_dataset)), len(train_dataset) - int(self.opt.data_percentage * len(train_dataset))])
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
         val_dataset = self.dataset(
             self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
             self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
-        val_dataset = torch.utils.data.random_split(val_dataset, [self.opt.data_percentage, 1.0 - self.opt.data_percentage])
+        val_dataset, _ = torch.utils.data.random_split(val_dataset, [int(self.opt.data_percentage * len(val_dataset)), len(val_dataset) - int(self.opt.data_percentage * len(val_dataset))])
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -225,7 +225,7 @@ class Trainer:
         """Run a single epoch of training and validation
         """
 
-        print("Training")
+        print("Training ", self.epoch, " / ", self.opt.num_epochs)
         self.set_train()
 
         self.model_lr_scheduler.step()
