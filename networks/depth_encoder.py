@@ -381,6 +381,7 @@ class LiteMono(nn.Module):
                     else:
                         raise NotImplementedError
                 else:
+                    # Remove DilatedConv, replace with normal convolution
                     stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
                                                     expan_ratio=expan_ratio))
