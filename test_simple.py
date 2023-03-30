@@ -1,7 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import os
-import sys
 import glob
 import argparse
 import time
@@ -16,10 +15,9 @@ from torchvision import transforms, datasets
 import networks
 from layers import disp_to_depth
 import cv2
-import heapq
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-
+from prettytable import PrettyTable
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -50,6 +48,8 @@ def parse_args():
     parser.add_argument("--no_cuda",
                         help='if set, disables CUDA',
                         action='store_true')
+    
+    parser.add_argument("--model_summary", action="store_true", help="Prints a model summary")
 
     return parser.parse_args()
 
@@ -269,10 +269,61 @@ def test_lite_mono(args):
                 cv2.waitKey(0)
             i+=1
 
+def print_model_summary(args):
+    if torch.cuda.is_available() and not args.no_cuda:
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    encoder_path = os.path.join(args.load_weights_folder, "encoder.pth")
+    decoder_path = os.path.join(args.load_weights_folder, "depth.pth")
+
+    encoder_dict = torch.load(encoder_path)
+    decoder_dict = torch.load(decoder_path)
+
+    # extract the height and width of image that this model was trained with
+    feed_height = encoder_dict['height']
+    feed_width = encoder_dict['width']
+    encoder = networks.LiteMono(model=args.model,
+                                    height=feed_height,
+                                    width=feed_width)
+
+    model_dict = encoder.state_dict()
+    encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
+
+    encoder.to(device)
+    
+    print("   Loading pretrained decoder")
+    depth_decoder = networks.DepthDecoder(encoder.num_ch_enc, scales=range(3))
+    depth_model_dict = depth_decoder.state_dict()
+    depth_decoder.load_state_dict({k: v for k, v in decoder_dict.items() if k in depth_model_dict})
+
+    depth_decoder.to(device)
+
+    encoder.cuda()
+    
+    print(encoder)
+
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in encoder.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        table.add_row([name, params])
+        total_params+=params
+    print(table)
+    print(f"Total Trainable Params: {total_params}")
+    
+    del depth_decoder
+    del encoder
+
 if __name__ == '__main__':
     args = parse_args()
-    assert args.test_files is not None or args.image_path is not None, "You must specify either --image_path or --test_files"
+    assert args.test_files is not None or args.image_path is not None or args.model_summary is not None, "You must specify either --image_path or --test_files"
     assert args.load_weights_folder is not None, "You must specify the --load_weights_folder parameter"
+
+    if args.model_summary:
+        print_model_summary(args)
 
     if args.test_files:
         test_lite_mono(args)
