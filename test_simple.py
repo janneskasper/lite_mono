@@ -4,6 +4,7 @@ import os
 import sys
 import glob
 import argparse
+import time
 import numpy as np
 import PIL.Image as pil
 import matplotlib as mpl
@@ -23,12 +24,12 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Simple testing function for Lite-Mono models.')
-
+    parser.add_argument("--test_files", type=str, help="Path to a single image file or directory")
     parser.add_argument('--image_path', type=str,
-                        help='path to a test image or folder of images', required=True)
+                        help='path to a test image or folder of images')
 
     parser.add_argument('--load_weights_folder', type=str,
-                        help='path of a pretrained model to use',
+                        help='path of a pretrained model to use', required=True
                         )
 
     parser.add_argument('--test',
@@ -56,8 +57,7 @@ def parse_args():
 def test_simple(args):
     """Function to predict for a single image or folder of images
     """
-    assert args.load_weights_folder is not None, \
-        "You must specify the --load_weights_folder parameter"
+    assert os.path.isdir(args.load_weights_folder), "--load_weights_folder has to point the directory with the saved weights"
 
     if torch.cuda.is_available() and not args.no_cuda:
         device = torch.device("cuda")
@@ -185,7 +185,96 @@ def test_simple(args):
 
     print('-> Done!')
 
+def test_lite_mono(args):
+    """Function to predict for a single image or folder of images
+    """
+    assert os.path.isdir(args.load_weights_folder), "--load_weights_folder has to point the directory with the saved weights"
+    assert os.path.isfile(args.test_files) is not None, "--test_files has to point to a single image file or a directory with files"
+
+    if torch.cuda.is_available() and not args.no_cuda:
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print("-> Loading model from ", args.load_weights_folder)
+    encoder_path = os.path.join(args.load_weights_folder, "encoder.pth")
+    decoder_path = os.path.join(args.load_weights_folder, "depth.pth")
+
+    encoder_dict = torch.load(encoder_path)
+    decoder_dict = torch.load(decoder_path)
+
+    # extract the height and width of image that this model was trained with
+    feed_height = encoder_dict['height']
+    feed_width = encoder_dict['width']
+
+    # LOADING PRETRAINED MODEL
+    print("   Loading pretrained encoder")
+    encoder = networks.LiteMono(model=args.model,
+                                    height=feed_height,
+                                    width=feed_width)
+
+    model_dict = encoder.state_dict()
+    encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
+
+    encoder.to(device)
+    encoder.eval()
+
+    print("   Loading pretrained decoder")
+    depth_decoder = networks.DepthDecoder(encoder.num_ch_enc, scales=range(3))
+    depth_model_dict = depth_decoder.state_dict()
+    depth_decoder.load_state_dict({k: v for k, v in decoder_dict.items() if k in depth_model_dict})
+
+    depth_decoder.to(device)
+    depth_decoder.eval()
+
+    image_paths = []
+    if os.path.isdir(args.test_files):
+        image_paths = glob.glob(os.path.join(args.test_files, '*.{}'.format(args.ext)))
+    elif os.path.isfile(args.test_files):
+        image_paths = [args.test_files]
+    if len(image_paths) < 1:
+        print(f"No images found with ending \"{args.ext}\" in \"{args.test_files}\"!")
+        return
+    with torch.no_grad():
+        # Load image and preprocess
+        i = 1
+        for img in image_paths:
+            input_image = pil.open(img).convert('RGB')
+            original_width, original_height = input_image.size
+            input_image_tensor = transforms.ToTensor()(input_image.resize((feed_width, feed_height), pil.LANCZOS)).unsqueeze(0)
+
+            # PREDICTION
+            # do it a few times for real performance -> first inference quite slow
+            t = time.time()
+            input_image_tensor = input_image_tensor.to(device)
+            features = encoder(input_image_tensor)
+            outputs = depth_decoder(features)
+            print(f"{i}: Inference time: {(time.time() - t) * 1000} ms")
+            disp = outputs[("disp", 0)]
+
+            disp_resized = torch.nn.functional.interpolate(
+                disp, (original_height, original_width), mode="bilinear", align_corners=False)
+            # Saving colormapped depth image
+            disp_resized_np = disp_resized.squeeze().cpu().numpy()
+            vmax = np.percentile(disp_resized_np, 95)
+            normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
+            mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
+            colormapped_im = np.array((mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8))
+
+            cv2.imshow("Input", np.array(input_image))
+            cv2.imshow("Colormap", cv2.cvtColor(colormapped_im, cv2.COLOR_BGR2RGB))
+            if len(image_paths) > 1:
+                cv2.waitKey(delay=50)
+            else:
+                cv2.waitKey(0)
+            i+=1
 
 if __name__ == '__main__':
     args = parse_args()
-    test_simple(args)
+    assert args.test_files is not None or args.image_path is not None, "You must specify either --image_path or --test_files"
+    assert args.load_weights_folder is not None, "You must specify the --load_weights_folder parameter"
+
+    if args.test_files:
+        test_lite_mono(args)
+    elif args.image_path:
+        test_simple(args)

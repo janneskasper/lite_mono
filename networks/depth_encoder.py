@@ -413,11 +413,18 @@ class LiteMono(nn.Module):
         tmp_x = []
         x = self.downsample_layers[0](x)
         x = self.stem2(torch.cat((x, x_down[0]), dim=1))
+
+        # This x is the result from the stage 2 downsampling (saved in tmp_x for shortcut) 
         tmp_x.append(x)
+
+        # Removing Shortcut connection by not adding the downsampling result to tmp_x
+        # tmp_x = []
+
 
         for s in range(len(self.stages[0])-1):
             x = self.stages[0][s](x)
         x = self.stages[0][-1](x)
+        # This x is the result of stage 2 saved for next stage in tmp_x and for upsampling block in features
         tmp_x.append(x)
         features.append(x)
 
@@ -425,8 +432,13 @@ class LiteMono(nn.Module):
             tmp_x.append(x_down[i])
             x = torch.cat(tmp_x, dim=1)
             x = self.downsample_layers[i](x)
-
+            
+            # This x is the result from stage 3 downsampling
             tmp_x = [x]
+
+            # Removing Shortcut connection by not adding the downsampling result to tmp_x
+            # tmp_x = []
+
             for s in range(len(self.stages[i]) - 1):
                 x = self.stages[i][s](x)
             x = self.stages[i][-1](x)
