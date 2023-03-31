@@ -6,6 +6,8 @@ from timm.models.layers import DropPath
 import math
 import torch.cuda
 
+from natten import NeighborhoodAttention2D as NeighborhoodAttention
+
 
 class PositionalEncodingFourier(nn.Module):
     """
@@ -219,17 +221,109 @@ class DilatedConv(nn.Module):
         x = input + self.drop_path(x)
 
         return x
+    
+class Mlp(nn.Module):
+    def __init__(
+        self,
+        in_features,
+        hidden_features=None,
+        out_features=None,
+        act_layer=nn.GELU,
+        drop=0.0,
+    ):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
 
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+    
+class NatLayer(nn.Module):
+    def __init__(
+        self,
+        dim,
+        num_heads,
+        kernel_size=3,
+        dilation=None,
+        mlp_ratio=2.0,
+        qkv_bias=True,
+        qk_scale=None,
+        drop=0.0,
+        attn_drop=0.0,
+        drop_path=0.5,
+        act_layer=nn.GELU,
+        norm_layer=LayerNorm,
+        layer_scale=1e-5,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.mlp_ratio = mlp_ratio
+
+        self.norm1 = nn.BatchNorm2d(dim) #norm_layer(dim)
+        self.attn = NeighborhoodAttention(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act_layer=act_layer,
+            drop=drop,
+        )
+        self.layer_scale = False
+        if layer_scale is not None and type(layer_scale) in [int, float]:
+            self.layer_scale = True
+            self.gamma1 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+            self.gamma2 = nn.Parameter(
+                layer_scale * torch.ones(dim), requires_grad=True
+            )
+
+    def forward(self, x):
+        if not self.layer_scale:
+            shortcut = x
+            x = self.norm1(x)
+            x = self.attn(x)
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x
+        shortcut = x
+        x = self.norm1(x)
+        x = self.attn(x)
+        x = shortcut + self.drop_path(self.gamma1 * x)
+        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
+        return x
 
 class LGFI(nn.Module):
     """
     Local-Global Features Interaction
     """
     def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, expan_ratio=6,
-                 use_pos_emb=True, num_heads=6, qkv_bias=True, attn_drop=0., drop=0.):
+                 use_pos_emb=True, num_heads=6, qkv_bias=True, attn_drop=0., drop=0., dilation=1):
         super().__init__()
 
         self.dim = dim
+        self.dilation = dilation
         self.pos_embd = None
         if use_pos_emb:
             self.pos_embd = PositionalEncodingFourier(dim=self.dim)
@@ -248,20 +342,33 @@ class LGFI(nn.Module):
                                   requires_grad=True) if layer_scale_init_value > 0 else None
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
+        self.attn = NeighborhoodAttention(
+            dim,
+            kernel_size=3,
+            dilation=dilation,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=layer_scale_init_value,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
+
     def forward(self, x):
         input_ = x
 
         # XCA
         B, C, H, W = x.shape
         x = x.reshape(B, C, H * W).permute(0, 2, 1)
+        if self.dilation == 1:
+            if self.pos_embd:
+                pos_encoding = self.pos_embd(B, H, W).reshape(B, -1, x.shape[1]).permute(0, 2, 1)
+                x = x + pos_encoding
 
-        if self.pos_embd:
-            pos_encoding = self.pos_embd(B, H, W).reshape(B, -1, x.shape[1]).permute(0, 2, 1)
-            x = x + pos_encoding
-
-        x = x + self.gamma_xca * self.xca(self.norm_xca(x))
+            x = x + self.gamma_xca * self.xca(self.norm_xca(x))
 
         x = x.reshape(B, H, W, C)
+        if self.dilation > 1:
+            x = self.attn(x)
 
         # Inverted Bottleneck
         x = self.norm(x)
@@ -303,6 +410,7 @@ class LiteMono(nn.Module):
         super().__init__()
 
         if model == 'lite-mono':
+            self.num_heads = [3, 6, 12]
             self.num_ch_enc = np.array([48, 80, 128])
             self.depth = [4, 4, 10]
             self.dims = [48, 80, 128]
@@ -375,16 +483,21 @@ class LiteMono(nn.Module):
                         stage_blocks.append(LGFI(dim=self.dims[i], drop_path=dp_rates[cur + j],
                                                  expan_ratio=expan_ratio,
                                                  use_pos_emb=use_pos_embd_xca[i], num_heads=heads[i],
-                                                 layer_scale_init_value=layer_scale_init_value,
+                                                 layer_scale_init_value=layer_scale_init_value, dilation=1
                                                  ))
 
                     else:
                         raise NotImplementedError
                 else:
-                    # Remove DilatedConv, replace with normal convolution
-                    stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
-                                                    layer_scale_init_value=layer_scale_init_value,
-                                                    expan_ratio=expan_ratio))
+                    # Remove DilatedConv, replace with dilated NeighbourhooodAttention
+                    stage_blocks.append(LGFI(dim=self.dims[i], drop_path=dp_rates[cur + j],
+                                                 expan_ratio=expan_ratio,
+                                                 use_pos_emb=use_pos_embd_xca[i], num_heads=heads[i],
+                                                 layer_scale_init_value=layer_scale_init_value, dilation=self.dilation[i][j]
+                                                 ))
+                    # stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                    #                                 layer_scale_init_value=layer_scale_init_value, num_heads=self.num_heads[i],
+                    #                                 expan_ratio=expan_ratio))
 
             self.stages.append(nn.Sequential(*stage_blocks))
             cur += self.depth[i]

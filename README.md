@@ -76,8 +76,10 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 #### start training
     python train.py --data_path path/to/your/data --model_name mytrain --batch_size 12
 
-#### Training for smaller gpu
-    python train.py --data_path datasets/kitti_data --model_name Lite_Mono --num_workers=4 --batch_size=4 --data_percentage 0.01
+#### Training on linux
+    cd ../../mnt/d/source/repos/lite_mono/
+
+    python train.py --data_path datasets/kitti_data --model_name Lite_Mono --num_workers=4 --batch_size=4 --data_percentage 0.1
     
 #### tensorboard visualization
     tensorboard --logdir .\tmp\Lite_Mono\ --port=6060
