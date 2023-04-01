@@ -72,6 +72,10 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 ## Training
 #### dependency installation 
     pip install 'git+https://github.com/saadnaeem-dev/pytorch-linear-warmup-cosine-annealing-warm-restarts-weight-decay'
+
+##### For DNAT (recommend cuda 11.8, python 3.10, pytorch 2.0.0)
+    pip install -r requirements.txt
+
     
 #### start training
     python train.py --data_path path/to/your/data --model_name mytrain --batch_size 12
