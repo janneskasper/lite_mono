@@ -1,4 +1,6 @@
-python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NAT/models/weights_2/ --data_path datasets/kitti_data --model lite-mono --num_workers=4
+Trained for 3 epochs
+
+python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NAT/models/weights_2/ --data_path datasets/kitti_data --model lite-mono --num_workers=4 --use_dnat true
 -> Loading weights from tmp/Lite_Mono_Full_NAT/models/weights_2/
 -> Computing predictions with size 640x192
 -> Evaluating
@@ -9,5 +11,22 @@ python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NAT/models/we
 &   0.170  &   1.392  &   5.850  &   0.239  &   0.770  &   0.922  &   0.971  \\
 
   flops: 4.373G, params: 2.357M, flops_e: 3.655G, params_e:2.131M, flops_d:718.295M, params_d:226.627K
+
+-> Done!
+
+
+Trained for 3 epochs
+
+python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_DEF/models/weights_2/ --data_path datasets/kitti_data --model lite-mono --num_workers=4 --use_dnat false
+-> Loading weights from tmp/Lite_Mono_Full_DEF/models/weights_2/
+-> Computing predictions with size 640x192
+-> Evaluating
+   Mono evaluation - using median scaling
+ Scaling ratios | med: 46.742 | std: 0.110
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 |
+&   0.168  &   1.249  &   5.739  &   0.241  &   0.764  &   0.922  &   0.971  \\
+
+  flops: 5.032G, params: 3.069M, flops_e: 4.314G, params_e:2.842M, flops_d:718.295M, params_d:226.627K
 
 -> Done!

@@ -101,7 +101,8 @@ def evaluate(opt):
 
         encoder = networks.LiteMono(model=opt.model,
                                     height=encoder_dict['height'],
-                                    width=encoder_dict['width'])
+                                    width=encoder_dict['width'],
+                                    use_dnat=opt.use_dnat)
         depth_decoder = networks.DepthDecoder(encoder.num_ch_enc, scales=range(3))
         model_dict = encoder.state_dict()
         depth_model_dict = depth_decoder.state_dict()
