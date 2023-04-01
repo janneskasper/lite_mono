@@ -94,6 +94,10 @@ class LiteMonoOptions:
                                  type=bool,
                                  help="profile once at the beginning of the training",
                                  default=True)
+        self.parser.add_argument("--use_dnat",
+                                 type=lambda x: (str(x).lower() == 'true'),
+                                 help="use dnat",
+                                 default=False)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",

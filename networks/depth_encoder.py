@@ -389,7 +389,8 @@ class LiteMono(nn.Module):
     def __init__(self, in_chans=3, model='lite-mono', height=192, width=640,
                  global_block=[1, 1, 1], global_block_type=['LGFI', 'LGFI', 'LGFI'],
                  drop_path_rate=0.2, layer_scale_init_value=1e-6, expan_ratio=6,
-                 heads=[8, 8, 8], use_pos_embd_xca=[True, False, False], **kwargs):
+                 heads=[8, 8, 8], use_pos_embd_xca=[True, False, False],
+                 use_dnat=False, **kwargs):
 
         super().__init__()
 
@@ -474,12 +475,16 @@ class LiteMono(nn.Module):
                         raise NotImplementedError
                 else:
                     # Remove DilatedConv, replace with dilated NeighbourhooodAttention
-                    stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.num_heads[i], 
+                    if use_dnat:
+                        print('Using DNAT')
+                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.num_heads[i], 
                                                  dilation=self.dilation[i][j], drop_path=dp_rates[cur + j], 
                                                  qk_scale=layer_scale_init_value))
-                    # stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
-                    #                                 layer_scale_init_value=layer_scale_init_value, num_heads=self.num_heads[i],
-                    #                                 expan_ratio=expan_ratio))
+                    else:
+                        print('Using DilatedConv')
+                        stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                                                    layer_scale_init_value=layer_scale_init_value,
+                                                    expan_ratio=expan_ratio))
 
             self.stages.append(nn.Sequential(*stage_blocks))
             cur += self.depth[i]
