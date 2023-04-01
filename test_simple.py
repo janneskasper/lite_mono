@@ -26,6 +26,9 @@ def parse_args():
 
     parser.add_argument('--image_path', type=str,
                         help='path to a test image or folder of images', required=True)
+    
+    parser.add_argument('--output_file_name', type=str,
+                        help='path to a test image or folder of images', required=True)
 
     parser.add_argument('--load_weights_folder', type=str,
                         help='path of a pretrained model to use',
@@ -159,7 +162,7 @@ def test_simple(args):
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
 
             # Saving numpy file
-            output_name = os.path.splitext(os.path.basename(image_path))[0]
+            output_name = os.path.splitext(os.path.basename(image_path))[0] + args.output_file_name
             # output_name = os.path.splitext(image_path)[0].split('/')[-1]
             scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
 

@@ -159,14 +159,14 @@ class Trainer:
         train_dataset, _ = torch.utils.data.random_split(train_dataset, [int(self.opt.data_percentage * len(train_dataset)), len(train_dataset) - int(self.opt.data_percentage * len(train_dataset))])
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=False, drop_last=True)
         val_dataset = self.dataset(
             self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
             self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
         val_dataset, _ = torch.utils.data.random_split(val_dataset, [int(self.opt.data_percentage * len(val_dataset)), len(val_dataset) - int(self.opt.data_percentage * len(val_dataset))])
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=False, drop_last=True)
         self.val_iter = iter(self.val_loader)
 
         self.writers = {}
