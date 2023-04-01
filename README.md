@@ -80,10 +80,10 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 #### start training
     python train.py --data_path path/to/your/data --model_name mytrain --batch_size 12
 
-#### Training on linux
-    cd ../../mnt/d/source/repos/lite_mono/
+#### Training & Evaluating DNAT
+    python3 train.py --data_path datasets/kitti_data --model_name Lite_Mono_DNAT --num_workers=4 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --use_dnat true
 
-    python train.py --data_path datasets/kitti_data --model_name Lite_Mono --num_workers=4 --batch_size=4 --data_percentage 0.1
+    python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_DNAT/models/{weights_folder} --data_path datasets/kitti_data --model lite-mono --num_workers=4 --use_dnat true
     
 #### tensorboard visualization
     tensorboard --logdir .\tmp\Lite_Mono\ --port=6060
