@@ -297,19 +297,18 @@ class NatLayer(nn.Module):
         )
 
     def forward(self, x):
-        shortcut = x
         B, C, H, W = x.shape
         
         x = x.reshape(B, H, W, C)
+        shortcut = x
+        
         x = self.norm1(x)
         x = self.attn(x)
-        
-        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
 
-        x = shortcut + self.drop_path(self.gamma1 * x.reshape(B, H, W, C)).reshape(B, C, H, W)
-        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x.reshape(B, H, W, C)))).reshape(B, C, H, W)
+        x = shortcut + self.drop_path(self.gamma1 * x)
+        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
 
-        return x
+        return x.reshape(B, C, H, W)
 
 class LGFI(nn.Module):
     """
@@ -395,7 +394,6 @@ class LiteMono(nn.Module):
         super().__init__()
 
         if model == 'lite-mono':
-            self.num_heads = heads
             self.num_ch_enc = np.array([48, 80, 128])
             self.depth = [4, 4, 10]
             self.dims = [48, 80, 128]
@@ -477,7 +475,7 @@ class LiteMono(nn.Module):
                     # Remove DilatedConv, replace with dilated NeighbourhooodAttention
                     if use_dnat:
                         print('Using DNAT')
-                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.num_heads[i], 
+                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=heads[i], 
                                                  dilation=self.dilation[i][j], drop_path=dp_rates[cur + j], 
                                                  qk_scale=layer_scale_init_value))
                     else:

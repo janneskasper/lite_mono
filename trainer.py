@@ -137,6 +137,7 @@ class Trainer:
             self.load_pretrain()
 
         print("Training model named:\n  ", self.opt.model_name)
+        print("Using model:\n  " ,self.opt.model)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
         print("Training is using:\n  ", self.device)
 
