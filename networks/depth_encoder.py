@@ -222,6 +222,67 @@ class DilatedConv(nn.Module):
 
         return x
     
+class DilatedNatConv(nn.Module):
+    """
+    A single Dilated Convolution layer in the Consecutive Dilated Convolutions (CDC) module.
+    """
+    def __init__(self, dim, num_heads, kernel_size, dilation=1, stride=1, drop_path=0.,
+                 layer_scale_init_value=1e-6, expan_ratio=6, qkv_bias=True,
+                 qk_scale=None, drop=0.0, attn_drop=0.0):
+        """
+        :param dim: input dimension
+        :param k: kernel size
+        :param dilation: dilation rate
+        :param drop_path: drop_path rate
+        :param layer_scale_init_value:
+        :param expan_ratio: inverted bottelneck residual
+        """
+
+        super().__init__()
+
+        self.ddwconv = CDilated(dim, dim, kSize=kernel_size, stride=stride, groups=dim, d=dilation)
+        self.bn1 = nn.BatchNorm2d(dim)
+
+        self.norm = LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(dim, expan_ratio * dim)
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(expan_ratio * dim, dim)
+        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones(dim),
+                                  requires_grad=True) if layer_scale_init_value > 0 else None
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.attn = NeighborhoodAttention(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
+
+    def forward(self, x):
+        input = x
+
+        x = self.ddwconv(x)
+        x = self.bn1(x)
+        B, C, H, W = x.shape
+        
+        x = x.reshape(B, H, W, C)
+        # Add attention after dilated convolution
+        x = self.attn(x)
+
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.reshape(B, C, H, W)
+
+        x = input + self.drop_path(x)
+
+        return x
+    
 class Mlp(nn.Module):
     def __init__(
         self,
@@ -389,7 +450,7 @@ class LiteMono(nn.Module):
                  global_block=[1, 1, 1], global_block_type=['LGFI', 'LGFI', 'LGFI'],
                  drop_path_rate=0.2, layer_scale_init_value=1e-6, expan_ratio=6,
                  heads=[8, 8, 8], use_pos_embd_xca=[True, False, False],
-                 use_dnat=False, **kwargs):
+                 model_extension='dilatedconv', **kwargs):
 
         super().__init__()
 
@@ -473,16 +534,23 @@ class LiteMono(nn.Module):
                         raise NotImplementedError
                 else:
                     # Remove DilatedConv, replace with dilated NeighbourhooodAttention
-                    if use_dnat:
+                    if model_extension == 'dilatednat':
                         print('Using DNAT')
                         stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=heads[i], 
                                                  dilation=self.dilation[i][j], drop_path=dp_rates[cur + j], 
                                                  qk_scale=layer_scale_init_value))
-                    else:
+                    elif model_extension == 'dilatedconv':
                         print('Using DilatedConv')
                         stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
                                                     expan_ratio=expan_ratio))
+                    elif model_extension == 'dilatednatconv':
+                        print('Using DilatedNatConv')
+                        stage_blocks.append(DilatedNatConv(dim=self.dims[i], kernel_size=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                                                    layer_scale_init_value=layer_scale_init_value,
+                                                    expan_ratio=expan_ratio, num_heads=heads[i], qk_scale=layer_scale_init_value))
+                    else:
+                        raise NotImplementedError
 
             self.stages.append(nn.Sequential(*stage_blocks))
             cur += self.depth[i]

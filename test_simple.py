@@ -46,6 +46,14 @@ def parse_args():
                             "lite-mono",
                             "lite-mono-small",
                             "lite-mono-tiny"])
+    
+    parser.add_argument('--model_extension', type=str,
+                        help='name of model extension to use',
+                        default="dilatedconv",
+                        choices=[
+                            "dilatedconv",
+                            "dilatednat",
+                            "dilatednatconv"])
 
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
@@ -82,7 +90,8 @@ def test_simple(args):
     print("   Loading pretrained encoder")
     encoder = networks.LiteMono(model=args.model,
                                     height=feed_height,
-                                    width=feed_width)
+                                    width=feed_width,
+                                    model_extension=args.model_extension)
 
     model_dict = encoder.state_dict()
     encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})

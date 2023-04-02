@@ -120,6 +120,13 @@ class LiteMonoOptions:
                                  type=int,
                                  help="step size of the scheduler",
                                  default=15)
+        self.parser.add_argument('--model_extension', type=str,
+                                 help='name of model extension to use',
+                                 default="dilatedconv",
+                                 choices=[
+                                      "dilatedconv",
+                                      "dilatednat",
+                                      "dilatednatconv"])
 
         # ABLATION options
         self.parser.add_argument("--v1_multiscale",
