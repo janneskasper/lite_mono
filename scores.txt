@@ -87,3 +87,33 @@ python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NAT_TINY/mode
   flops: 2.457G, params: 1.677M, flops_e: 1.989G, params_e:1.484M, flops_d:467.804M, params_d:192.467K
 
 -> Done!
+
+Taken 3h35min
+python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NATCONV/models/weights_2 --data_path datasets/kitti_data --model lite-mono --num_workers=4 --model_extension dilatednatconv
+-> Loading weights from tmp/Lite_Mono_Full_NATCONV/models/weights_2
+-> Computing predictions with size 640x192
+-> Evaluating
+   Mono evaluation - using median scaling
+ Scaling ratios | med: 51.657 | std: 0.120
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 |
+&   0.168  &   1.230  &   5.704  &   0.240  &   0.762  &   0.920  &   0.972  \\
+
+  flops: 5.659G, params: 3.752M, flops_e: 4.941G, params_e:3.525M, flops_d:718.295M, params_d:226.627K
+
+-> Done!
+
+Taken 5h50min
+python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_Full_NATCONV/models/weights_4 --data_path datasets/kitti_data --model lite-mono --num_workers=4 --model_extension dilatednatconv
+-> Loading weights from tmp/Lite_Mono_Full_NATCONV/models/weights_4
+-> Computing predictions with size 640x192
+-> Evaluating
+   Mono evaluation - using median scaling
+ Scaling ratios | med: 47.188 | std: 0.117
+
+   abs_rel |   sq_rel |     rmse | rmse_log |       a1 |       a2 |       a3 |
+&   0.164  &   1.229  &   5.613  &   0.236  &   0.773  &   0.926  &   0.972  \\
+
+  flops: 5.659G, params: 3.752M, flops_e: 4.941G, params_e:3.525M, flops_d:718.295M, params_d:226.627K
+
+-> Done!

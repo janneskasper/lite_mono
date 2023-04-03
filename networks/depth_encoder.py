@@ -240,9 +240,6 @@ class DilatedNatConv(nn.Module):
 
         super().__init__()
 
-        self.ddwconv = CDilated(dim, dim, kSize=kernel_size, stride=stride, groups=dim, d=dilation)
-        self.bn1 = nn.BatchNorm2d(dim)
-
         self.norm = LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, expan_ratio * dim)
         self.act = nn.GELU()
@@ -263,13 +260,11 @@ class DilatedNatConv(nn.Module):
 
     def forward(self, x):
         input = x
-
-        x = self.ddwconv(x)
-        x = self.bn1(x)
         B, C, H, W = x.shape
         
         x = x.reshape(B, H, W, C)
-        # Add attention after dilated convolution
+        # Add attention instead of dilated convolution
+        x = self.norm(x)
         x = self.attn(x)
 
         x = self.pwconv1(x)
