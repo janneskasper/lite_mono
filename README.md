@@ -83,7 +83,9 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 #### Training & Evaluating DNAT
     python3 train.py --data_path datasets/kitti_data --model_name Lite_Mono_DNAT --num_workers=4 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --use_dnat true
 
-    python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_DNAT/models/{weights_folder} --data_path datasets/kitti_data --model lite-mono --num_workers=4 --use_dnat true
+    python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_DNAT/models/{weights_folder} --data_path datasets/kitti_data --model lite-mono --num_workers=4 --model_extension dilatedconv
+
+    python3 train.py --data_path ../../../e/lite_mono/datasets/kitti_data --model_name Lite_Mono_Full_NATCONV2 --num_workers=6 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --model_extension dilatednatconv --model lite-mono --lr 0.0001 0.000005 15 0.0001 0.00001 15
     
 #### tensorboard visualization
     tensorboard --logdir .\tmp\Lite_Mono\ --port=6060

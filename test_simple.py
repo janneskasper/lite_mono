@@ -53,7 +53,8 @@ def parse_args():
                         choices=[
                             "dilatedconv",
                             "dilatednat",
-                            "dilatednatconv"])
+                            "dilatednatconv"],
+                        required=True)
 
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
