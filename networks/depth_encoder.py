@@ -260,9 +260,8 @@ class DilatedNatConv(nn.Module):
 
     def forward(self, x):
         input = x
-        B, C, H, W = x.shape
         
-        x = x.permute(B, H, W, C)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         # Add attention instead of dilated convolution
         x = self.norm(x)
         x = self.attn(x)
@@ -272,7 +271,7 @@ class DilatedNatConv(nn.Module):
         x = self.pwconv2(x)
         if self.gamma is not None:
             x = self.gamma * x
-        x = x.permute(B, C, H, W)
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
 
         x = input + self.drop_path(x)
 
@@ -353,9 +352,7 @@ class NatLayer(nn.Module):
         )
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        
-        x = x.permute(B, H, W, C)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         shortcut = x
         
         x = self.norm1(x)
@@ -364,7 +361,8 @@ class NatLayer(nn.Module):
         x = shortcut + self.drop_path(self.gamma1 * x)
         x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
 
-        return x.permute(B, C, H, W)
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        return x
 
 class LGFI(nn.Module):
     """
