@@ -73,19 +73,20 @@ Please refer to [Monodepth2](https://github.com/nianticlabs/monodepth2) to prepa
 #### dependency installation 
     pip install 'git+https://github.com/saadnaeem-dev/pytorch-linear-warmup-cosine-annealing-warm-restarts-weight-decay'
 
-##### For DNAT (recommend cuda 11.8, python 3.10, pytorch 2.0.0)
-    pip install -r requirements.txt
 
-    
 #### start training
     python train.py --data_path path/to/your/data --model_name mytrain --batch_size 12
 
-#### Training & Evaluating DNAT
-    python3 train.py --data_path datasets/kitti_data --model_name Lite_Mono_DNAT --num_workers=4 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --use_dnat true
+## Working with DNAT
 
-    python3 evaluate_depth.py --load_weights_folder tmp/Lite_Mono_DNAT/models/{weights_folder} --data_path datasets/kitti_data --model lite-mono --num_workers=4 --model_extension dilatedconv
+### For DNAT (recommend cuda 11.8, python 3.10, pytorch 2.0.0)
+    pip install -r requirements.txt
 
-    python3 train.py --data_path ../../../e/lite_mono/datasets/kitti_data --model_name Lite_Mono_Full_NATCONV2 --num_workers=6 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --model_extension dilatednatconv --model lite-mono --lr 0.0001 0.000005 15 0.0001 0.00001 15
+### Evaluation
+    python3 evaluate_depth.py --load_weights_folder tmp/{model_name}/models/{weights_folder} --data_path {path/to}/datasets/kitti_data --model lite-mono --num_workers=4 --model_extension {dilatedconv/dilatednatconv/dilatednat}
+
+### Training
+    python3 train.py --data_path {path/to}/datasets/kitti_data --model_name {model_name} --num_workers=4 --batch_size=8 --data_percentage 1.0 --num_epochs 10 --model_extension {dilatedconv/dilatednatconv/dilatednat} --model lite-mono --lr 0.0001 0.000005 15 0.0001 0.00001 15
     
 #### tensorboard visualization
     tensorboard --logdir .\tmp\Lite_Mono\ --port=6060
