@@ -239,6 +239,7 @@ class DilatedNatConv(nn.Module):
         """
 
         super().__init__()
+        self.bn1 = nn.BatchNorm2d(dim)
 
         self.norm = LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, expan_ratio * dim)
@@ -260,12 +261,21 @@ class DilatedNatConv(nn.Module):
 
     def forward(self, x):
         input = x
+        """
+        # For layer normalization:
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.norm(x)
+        x = self.attn(x)
+        """
         
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         # Add attention instead of dilated convolution
-        x = self.norm(x)
         x = self.attn(x)
 
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        x = self.bn1(x)
+
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         x = self.pwconv1(x)
         x = self.act(x)
         x = self.pwconv2(x)
@@ -308,16 +318,15 @@ class NatLayer(nn.Module):
         dim,
         num_heads,
         kernel_size=3,
-        dilation=None,
-        mlp_ratio=2.0,
+        dilation=1,
+        mlp_ratio=4.0,
         qkv_bias=True,
         qk_scale=None,
         drop=0.0,
         attn_drop=0.0,
-        drop_path=0.5,
+        drop_path=0.0,
         act_layer=nn.GELU,
         norm_layer=LayerNorm,
-        layer_scale=1e-5,
     ):
         super().__init__()
         self.dim = dim
@@ -344,22 +353,15 @@ class NatLayer(nn.Module):
             act_layer=act_layer,
             drop=drop,
         )
-        self.gamma1 = nn.Parameter(
-            layer_scale * torch.ones(dim), requires_grad=True
-        )
-        self.gamma2 = nn.Parameter(
-            layer_scale * torch.ones(dim), requires_grad=True
-        )
 
     def forward(self, x):
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
-        shortcut = x
         
+        shortcut = x
         x = self.norm1(x)
         x = self.attn(x)
-
-        x = shortcut + self.drop_path(self.gamma1 * x)
-        x = x + self.drop_path(self.gamma2 * self.mlp(self.norm2(x)))
+        x = shortcut + self.drop_path(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
 
         x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
         return x
@@ -529,9 +531,10 @@ class LiteMono(nn.Module):
                     # Remove DilatedConv, replace with dilated NeighbourhooodAttention
                     if model_extension == 'dilatednat':
                         print('Using DNAT')
-                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=heads[i], 
-                                                 dilation=self.dilation[i][j], drop_path=dp_rates[cur + j], 
-                                                 qk_scale=layer_scale_init_value))
+                        head_dim = 32
+                        c = 1
+                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.dims[i] // head_dim * c, 
+                                                 dilation=self.dilation[i][j], drop_path=dp_rates[cur + j]))
                     elif model_extension == 'dilatedconv':
                         print('Using DilatedConv')
                         stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
@@ -539,9 +542,11 @@ class LiteMono(nn.Module):
                                                     expan_ratio=expan_ratio))
                     elif model_extension == 'dilatednatconv':
                         print('Using DilatedNatConv')
+                        head_dim = 32
+                        c = 1
                         stage_blocks.append(DilatedNatConv(dim=self.dims[i], kernel_size=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
-                                                    expan_ratio=expan_ratio, num_heads=heads[i], qk_scale=layer_scale_init_value))
+                                                    expan_ratio=expan_ratio, num_heads=self.dims[i] // head_dim * c, qk_scale=layer_scale_init_value))
                     else:
                         raise NotImplementedError
 
