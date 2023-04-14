@@ -269,13 +269,16 @@ class DilatedNatConv(nn.Module):
         """
         
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+
+        # For Layer normalization:
+        x = self.norm(x)
+
         # Add attention instead of dilated convolution
         x = self.attn(x)
 
-        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
-        x = self.bn1(x)
-
-        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        # For Batch normalization:
+        # x = self.bn1(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        
         x = self.pwconv1(x)
         x = self.act(x)
         x = self.pwconv2(x)
@@ -325,15 +328,16 @@ class NatLayer(nn.Module):
         drop=0.0,
         attn_drop=0.0,
         drop_path=0.0,
-        act_layer=nn.GELU,
-        norm_layer=LayerNorm,
+        act_layer=nn.GELU
     ):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.mlp_ratio = mlp_ratio
 
-        self.norm1 = norm_layer(dim)
+        # self.norm1 = nn.GroupNorm(num_groups=self.dim // 32, num_channels=dim)
+        # self.norm1 = LayerNorm(dim)
+        self.norm1 = nn.BatchNorm2d(dim)
         self.attn = NeighborhoodAttention(
             dim,
             kernel_size=kernel_size,
@@ -346,7 +350,9 @@ class NatLayer(nn.Module):
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
-        self.norm2 = norm_layer(dim)
+        # self.norm2 = nn.GroupNorm(num_groups=self.dim // 32, num_channels=dim)
+        # self.norm2 = LayerNorm(dim)
+        self.norm2 = nn.BatchNorm2d(dim)
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
@@ -358,9 +364,18 @@ class NatLayer(nn.Module):
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         
         shortcut = x
+
+        # For Group Normalization and Batch Normalization
+        # x = self.norm1(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        # For Layer Normalization
         x = self.norm1(x)
+
         x = self.attn(x)
         x = shortcut + self.drop_path(x)
+
+        # For Group Normalization and Batch Normalization
+        # x = x + self.drop_path(self.mlp(self.norm2(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)))
+        # For Layer Normalization
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
         x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
@@ -531,9 +546,7 @@ class LiteMono(nn.Module):
                     # Remove DilatedConv, replace with dilated NeighbourhooodAttention
                     if model_extension == 'dilatednat':
                         print('Using DNAT')
-                        head_dim = 32
-                        c = 1
-                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.dims[i] // head_dim * c, 
+                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.dims[i] // 32, 
                                                  dilation=self.dilation[i][j], drop_path=dp_rates[cur + j]))
                     elif model_extension == 'dilatedconv':
                         print('Using DilatedConv')
@@ -542,11 +555,9 @@ class LiteMono(nn.Module):
                                                     expan_ratio=expan_ratio))
                     elif model_extension == 'dilatednatconv':
                         print('Using DilatedNatConv')
-                        head_dim = 32
-                        c = 1
                         stage_blocks.append(DilatedNatConv(dim=self.dims[i], kernel_size=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
-                                                    expan_ratio=expan_ratio, num_heads=self.dims[i] // head_dim * c, qk_scale=layer_scale_init_value))
+                                                    expan_ratio=expan_ratio, num_heads=self.dims[i] // 32, qk_scale=layer_scale_init_value))
                     else:
                         raise NotImplementedError
 
