@@ -191,7 +191,8 @@ def test_lite_mono(args):
     assert os.path.isdir(args.load_weights_folder), "--load_weights_folder has to point the directory with the saved weights"
     assert os.path.isfile(args.test_files) is not None, "--test_files has to point to a single image file or a directory with files"
 
-    if torch.cuda.is_available() and not args.no_cuda:
+    cuda = torch.cuda.is_available() and not args.no_cuda
+    if cuda:
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
@@ -200,8 +201,12 @@ def test_lite_mono(args):
     encoder_path = os.path.join(args.load_weights_folder, "encoder.pth")
     decoder_path = os.path.join(args.load_weights_folder, "depth.pth")
 
-    encoder_dict = torch.load(encoder_path)
-    decoder_dict = torch.load(decoder_path)
+    if cuda:
+        encoder_dict = torch.load(encoder_path)
+        decoder_dict = torch.load(decoder_path)
+    else:
+        encoder_dict = torch.load(encoder_path, map_location=torch.device('cpu'))
+        decoder_dict = torch.load(decoder_path, map_location=torch.device('cpu'))
 
     # extract the height and width of image that this model was trained with
     feed_height = encoder_dict['height']
@@ -230,6 +235,7 @@ def test_lite_mono(args):
     image_paths = []
     if os.path.isdir(args.test_files):
         image_paths = glob.glob(os.path.join(args.test_files, '*.{}'.format(args.ext)))
+        image_paths.sort(key=lambda y: y.lower())
     elif os.path.isfile(args.test_files):
         image_paths = [args.test_files]
     if len(image_paths) < 1:
@@ -261,10 +267,12 @@ def test_lite_mono(args):
             mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
             colormapped_im = np.array((mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8))
 
-            cv2.imshow("Input", np.array(input_image))
+            input_image = cv2.resize(np.array(input_image), (960,540))
+            cv2.imshow("Input", input_image)
+            colormapped_im = cv2.resize(colormapped_im, (960,540))
             cv2.imshow("Colormap", cv2.cvtColor(colormapped_im, cv2.COLOR_BGR2RGB))
             if len(image_paths) > 1:
-                cv2.waitKey(delay=50)
+                cv2.waitKey(0)
             else:
                 cv2.waitKey(0)
             i+=1
