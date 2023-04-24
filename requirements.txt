@@ -1,0 +1,10 @@
+-f https://download.pytorch.org/whl/cu118
+torch==2.0.0
+-f https://download.pytorch.org/whl/cu118
+torchvision==0.15.1
+ninja
+flake8
+black
+isort
+-f https://shi-labs.com/natten/wheels/cu118/torch2.0.0/index.html
+natten
