@@ -6,6 +6,8 @@ from timm.models.layers import DropPath
 import math
 import torch.cuda
 
+from natten import NeighborhoodAttention2D as NeighborhoodAttention
+
 
 class PositionalEncodingFourier(nn.Module):
     """
@@ -219,7 +221,165 @@ class DilatedConv(nn.Module):
         x = input + self.drop_path(x)
 
         return x
+    
+class DilatedNatConv(nn.Module):
+    """
+    A single Dilated Convolution layer in the Consecutive Dilated Convolutions (CDC) module.
+    """
+    def __init__(self, dim, num_heads, kernel_size, dilation=1, stride=1, drop_path=0.,
+                 layer_scale_init_value=1e-6, expan_ratio=6, qkv_bias=True,
+                 qk_scale=None, drop=0.0, attn_drop=0.0):
+        """
+        :param dim: input dimension
+        :param k: kernel size
+        :param dilation: dilation rate
+        :param drop_path: drop_path rate
+        :param layer_scale_init_value:
+        :param expan_ratio: inverted bottelneck residual
+        """
 
+        super().__init__()
+        self.bn1 = nn.BatchNorm2d(dim)
+
+        self.norm = LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(dim, expan_ratio * dim)
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(expan_ratio * dim, dim)
+        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones(dim),
+                                  requires_grad=True) if layer_scale_init_value > 0 else None
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.attn = NeighborhoodAttention(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
+
+    def forward(self, x):
+        input = x
+        """
+        # For layer normalization:
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.norm(x)
+        x = self.attn(x)
+        """
+        
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+
+        # For Layer normalization:
+        x = self.norm(x)
+
+        # Add attention instead of dilated convolution
+        x = self.attn(x)
+
+        # For Batch normalization:
+        # x = self.bn1(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+
+        x = input + self.drop_path(x)
+
+        return x
+    
+class Mlp(nn.Module):
+    def __init__(
+        self,
+        in_features,
+        hidden_features=None,
+        out_features=None,
+        act_layer=nn.GELU,
+        drop=0.0,
+    ):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+    
+class NatLayer(nn.Module):
+    def __init__(
+        self,
+        dim,
+        num_heads,
+        kernel_size=3,
+        dilation=1,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        qk_scale=None,
+        drop=0.0,
+        attn_drop=0.0,
+        drop_path=0.0,
+        act_layer=nn.GELU
+    ):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.mlp_ratio = mlp_ratio
+
+        # self.norm1 = nn.GroupNorm(num_groups=self.dim // 32, num_channels=dim)
+        # self.norm1 = LayerNorm(dim)
+        self.norm1 = nn.BatchNorm2d(dim)
+        self.attn = NeighborhoodAttention(
+            dim,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+        )
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        # self.norm2 = nn.GroupNorm(num_groups=self.dim // 32, num_channels=dim)
+        # self.norm2 = LayerNorm(dim)
+        self.norm2 = nn.BatchNorm2d(dim)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=int(dim * mlp_ratio),
+            act_layer=act_layer,
+            drop=drop,
+        )
+
+    def forward(self, x):
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        
+        shortcut = x
+
+        # For Group Normalization and Batch Normalization
+        # x = self.norm1(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+        # For Layer Normalization
+        x = self.norm1(x)
+
+        x = self.attn(x)
+        x = shortcut + self.drop_path(x)
+
+        # For Group Normalization and Batch Normalization
+        # x = x + self.drop_path(self.mlp(self.norm2(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)))
+        # For Layer Normalization
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        return x
 
 class LGFI(nn.Module):
     """
@@ -248,13 +408,14 @@ class LGFI(nn.Module):
                                   requires_grad=True) if layer_scale_init_value > 0 else None
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
+
     def forward(self, x):
         input_ = x
 
         # XCA
         B, C, H, W = x.shape
         x = x.reshape(B, C, H * W).permute(0, 2, 1)
-
+        
         if self.pos_embd:
             pos_encoding = self.pos_embd(B, H, W).reshape(B, -1, x.shape[1]).permute(0, 2, 1)
             x = x + pos_encoding
@@ -298,7 +459,8 @@ class LiteMono(nn.Module):
     def __init__(self, in_chans=3, model='lite-mono', height=192, width=640,
                  global_block=[1, 1, 1], global_block_type=['LGFI', 'LGFI', 'LGFI'],
                  drop_path_rate=0.2, layer_scale_init_value=1e-6, expan_ratio=6,
-                 heads=[8, 8, 8], use_pos_embd_xca=[True, False, False], **kwargs):
+                 heads=[8, 8, 8], use_pos_embd_xca=[True, False, False],
+                 model_extension='dilatedconv', **kwargs):
 
         super().__init__()
 
@@ -377,15 +539,29 @@ class LiteMono(nn.Module):
                         stage_blocks.append(LGFI(dim=self.dims[i], drop_path=dp_rates[cur + j],
                                                  expan_ratio=expan_ratio,
                                                  use_pos_emb=use_pos_embd_xca[i], num_heads=heads[i],
-                                                 layer_scale_init_value=layer_scale_init_value,
+                                                 layer_scale_init_value=layer_scale_init_value
                                                  ))
 
                     else:
                         raise NotImplementedError
                 else:
-                    stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                    # Remove DilatedConv, replace with dilated NeighbourhooodAttention
+                    if model_extension == 'dilatednat':
+                        print('Using DNAT')
+                        stage_blocks.append(NatLayer(dim=self.dims[i], kernel_size=3, num_heads=self.dims[i] // 32, 
+                                                 dilation=self.dilation[i][j], drop_path=dp_rates[cur + j]))
+                    elif model_extension == 'dilatedconv':
+                        print('Using DilatedConv')
+                        stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
                                                     expan_ratio=expan_ratio))
+                    elif model_extension == 'dilatednatconv':
+                        print('Using DilatedNatConv')
+                        stage_blocks.append(DilatedNatConv(dim=self.dims[i], kernel_size=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                                                    layer_scale_init_value=layer_scale_init_value,
+                                                    expan_ratio=expan_ratio, num_heads=self.dims[i] // 32, qk_scale=layer_scale_init_value))
+                    else:
+                        raise NotImplementedError
 
             self.stages.append(nn.Sequential(*stage_blocks))
             cur += self.depth[i]

@@ -56,7 +56,8 @@ class Trainer:
             self.opt.frame_ids.append("s")
 
         self.models["encoder"] = networks.LiteMono(model=self.opt.model,
-                                                   drop_path_rate=self.opt.drop_path)
+                                                   drop_path_rate=self.opt.drop_path,
+                                                   model_extension=self.opt.model_extension)
 
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
@@ -136,6 +137,7 @@ class Trainer:
             self.load_pretrain()
 
         print("Training model named:\n  ", self.opt.model_name)
+        print("Using model:\n  " ,self.opt.model)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
         print("Training is using:\n  ", self.device)
 
@@ -159,14 +161,14 @@ class Trainer:
         train_dataset, _ = torch.utils.data.random_split(train_dataset, [int(self.opt.data_percentage * len(train_dataset)), len(train_dataset) - int(self.opt.data_percentage * len(train_dataset))])
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=False, drop_last=True)
         val_dataset = self.dataset(
             self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
             self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
         val_dataset, _ = torch.utils.data.random_split(val_dataset, [int(self.opt.data_percentage * len(val_dataset)), len(val_dataset) - int(self.opt.data_percentage * len(val_dataset))])
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
+            num_workers=self.opt.num_workers, pin_memory=False, drop_last=True)
         self.val_iter = iter(self.val_loader)
 
         self.writers = {}
@@ -362,11 +364,9 @@ class Trainer:
         """
         self.set_eval()
         try:
-            # inputs = self.val_iter.next()
             inputs = next(self.val_iter)
         except StopIteration:
             self.val_iter = iter(self.val_loader)
-            # inputs = self.val_iter.next()
             inputs = next(self.val_iter)
 
         with torch.no_grad():

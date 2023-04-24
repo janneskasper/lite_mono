@@ -24,7 +24,10 @@ def parse_args():
         description='Simple testing function for Lite-Mono models.')
     parser.add_argument("--test_files", type=str, help="Path to a single image file or directory")
     parser.add_argument('--image_path', type=str,
-                        help='path to a test image or folder of images')
+                        help='path to a test image or folder of images', required=True)
+    
+    parser.add_argument('--output_file_name', type=str,
+                        help='path to a test image or folder of images', required=True)
 
     parser.add_argument('--load_weights_folder', type=str,
                         help='path of a pretrained model to use', required=True
@@ -42,6 +45,15 @@ def parse_args():
                             "lite-mono",
                             "lite-mono-small",
                             "lite-mono-tiny"])
+    
+    parser.add_argument('--model_extension', type=str,
+                        help='name of model extension to use',
+                        default="dilatedconv",
+                        choices=[
+                            "dilatedconv",
+                            "dilatednat",
+                            "dilatednatconv"],
+                        required=True)
 
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
@@ -79,7 +91,8 @@ def test_simple(args):
     print("   Loading pretrained encoder")
     encoder = networks.LiteMono(model=args.model,
                                     height=feed_height,
-                                    width=feed_width)
+                                    width=feed_width,
+                                    model_extension=args.model_extension)
 
     model_dict = encoder.state_dict()
     encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
@@ -159,7 +172,7 @@ def test_simple(args):
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
 
             # Saving numpy file
-            output_name = os.path.splitext(os.path.basename(image_path))[0]
+            output_name = os.path.splitext(os.path.basename(image_path))[0] + args.output_file_name
             # output_name = os.path.splitext(image_path)[0].split('/')[-1]
             scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
 
