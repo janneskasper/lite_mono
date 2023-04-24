@@ -28,7 +28,7 @@ class LiteMonoOptions:
         self.parser.add_argument("--split",
                                  type=str,
                                  help="which training split to use",
-                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark"],
+                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark", "custom"],
                                  default="eigen_zhou")
         self.parser.add_argument("--model",
                                  type=str,
@@ -180,7 +180,7 @@ class LiteMonoOptions:
         self.parser.add_argument("--data_percentage",
                                  type=float,
                                  help="portion of dataset to use",
-                                 default=0.1)
+                                 default=1.0)
 
         # LOGGING options
         self.parser.add_argument("--log_frequency",
